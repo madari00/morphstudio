@@ -39,6 +39,7 @@ import { Toaster } from "sonner";
 export const metadata: Metadata = {
   title: "MorphStudio - Transforme-toi en anime par IA",
   description: "Fais un geste magique et deviens ton personnage anime préféré",
+  
 };
 
 export default function RootLayout({

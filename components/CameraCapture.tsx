@@ -2,29 +2,30 @@
 
 import { useRef, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Video, Square, Sparkles, Loader2 } from "lucide-react";
+import { Video, Square, Sparkles, Loader2, CameraOff } from "lucide-react";
 import { toast } from "sonner";
 import { gestureConfigs, type Character } from "@/types/characters";
 
-// Types pour MediaPipe
 let PoseLandmarker: any = null;
 let FilesetResolver: any = null;
 
 interface CameraCaptureProps {
   onRecordingComplete: (videoBlob: Blob) => void;
   selectedCharacter: Character;
+  cameraEnabled?: boolean;
 }
 
-export default function CameraCapture({ onRecordingComplete, selectedCharacter }: CameraCaptureProps) {
+export default function CameraCapture({ onRecordingComplete, selectedCharacter, cameraEnabled = true }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [recording, setRecording] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [gestureDetected, setGestureDetected] = useState(false);
-  const [detectionActive, setDetectionActive] = useState(true);
   const [mediaPipeLoading, setMediaPipeLoading] = useState(true);
   const poseLandmarkerRef = useRef<any>(null);
   const animationFrameRef = useRef<number>();
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
 
   // Initialiser MediaPipe
   useEffect(() => {
@@ -32,7 +33,6 @@ export default function CameraCapture({ onRecordingComplete, selectedCharacter }
       try {
         setMediaPipeLoading(true);
         
-        // Charger MediaPipe dynamiquement
         const vision = await import("@mediapipe/tasks-vision");
         PoseLandmarker = vision.PoseLandmarker;
         FilesetResolver = vision.FilesetResolver;
@@ -52,12 +52,10 @@ export default function CameraCapture({ onRecordingComplete, selectedCharacter }
 
         poseLandmarkerRef.current = poseLandmarker;
         setMediaPipeLoading(false);
-        console.log("✅ MediaPipe initialisé avec succès");
-        toast.success("Détection des gestes active !");
+        console.log("✅ MediaPipe initialisé");
       } catch (error) {
-        console.error("❌ Erreur MediaPipe:", error);
+        console.error("❌ MediaPipe:", error);
         setMediaPipeLoading(false);
-        toast.error("Impossible d'initialiser la détection de geste");
       }
     };
 
@@ -73,45 +71,102 @@ export default function CameraCapture({ onRecordingComplete, selectedCharacter }
     };
   }, []);
 
-  // Démarrer la caméra
+  // Gestion de la caméra
   useEffect(() => {
+    if (!cameraEnabled) {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      setCameraReady(false);
+      return;
+    }
+
     const startCamera = async () => {
       try {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: 640, height: 480 } 
+          video: { width: { ideal: 640 }, height: { ideal: 480 } } 
         });
+        streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setCameraReady(true);
-          console.log("✅ Caméra démarrée");
         }
       } catch (error) {
-        console.error("❌ Erreur caméra:", error);
-        toast.error("Impossible d'accéder à la caméra. Vérifie les permissions.");
+        console.error("❌ Caméra:", error);
+        setCameraReady(false);
+        toast.error("Impossible d'accéder à la caméra");
       }
     };
-    
+
     startCamera();
 
     return () => {
-      const stream = videoRef.current?.srcObject as MediaStream;
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [cameraEnabled]);
+
+  // Démarrer l'enregistrement
+  const startRecording = () => {
+    if (!videoRef.current || !videoRef.current.srcObject) return;
+    
+    setRecording(true);
+    setGestureDetected(false);
+    chunksRef.current = [];
+    
+    const stream = videoRef.current.srcObject as MediaStream;
+    const mediaRecorder = new MediaRecorder(stream);
+    mediaRecorderRef.current = mediaRecorder;
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunksRef.current.push(event.data);
+      }
+    };
+    
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: "video/webm" });
+      onRecordingComplete(blob);
+      setRecording(false);
+      chunksRef.current = [];
+    };
+    
+    mediaRecorder.start();
+    
+    // Arrêt automatique après 5 secondes
+    setTimeout(() => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
+        toast.success("Enregistrement terminé !");
+      }
+    }, 5000);
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+      toast.info("Enregistrement arrêté");
+    }
+  };
 
   // Détection du geste
   useEffect(() => {
-    if (!cameraReady || !videoRef.current || recording || !detectionActive || mediaPipeLoading) return;
+    if (!cameraReady || !videoRef.current || recording || mediaPipeLoading || !cameraEnabled) return;
 
     const video = videoRef.current;
-    let isDetecting = true;
+    let frameRequest: number;
 
     const detectFrame = () => {
-      if (!isDetecting) return;
-      if (!video || video.readyState !== 4) {
-        animationFrameRef.current = requestAnimationFrame(detectFrame);
+      if (!video || video.readyState !== 4 || recording || !cameraEnabled) {
+        frameRequest = requestAnimationFrame(detectFrame);
         return;
       }
 
@@ -126,10 +181,7 @@ export default function CameraCapture({ onRecordingComplete, selectedCharacter }
             if (gestureConfig && gestureConfig.detect(landmarks)) {
               if (!gestureDetected && !recording) {
                 setGestureDetected(true);
-                toast.success(`✨ Geste "${selectedCharacter.gestureName}" détecté !`, {
-                  description: "Démarrage de l'enregistrement...",
-                  duration: 2000
-                });
+                toast.success(`✨ Geste "${selectedCharacter.gestureName}" détecté !`);
                 startRecording();
               }
             }
@@ -139,63 +191,20 @@ export default function CameraCapture({ onRecordingComplete, selectedCharacter }
         }
       }
       
-      animationFrameRef.current = requestAnimationFrame(detectFrame);
+      frameRequest = requestAnimationFrame(detectFrame);
     };
 
     detectFrame();
 
     return () => {
-      isDetecting = false;
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+      if (frameRequest) {
+        cancelAnimationFrame(frameRequest);
       }
     };
-  }, [cameraReady, recording, detectionActive, selectedCharacter, mediaPipeLoading]);
-
-  const startRecording = () => {
-    if (!videoRef.current || !videoRef.current.srcObject) return;
-    
-    setRecording(true);
-    setDetectionActive(false);
-    
-    const stream = videoRef.current.srcObject as MediaStream;
-    const mediaRecorder = new MediaRecorder(stream);
-    mediaRecorderRef.current = mediaRecorder;
-    
-    const chunks: BlobPart[] = [];
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
-    };
-    
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
-      onRecordingComplete(blob);
-      setRecording(false);
-      setDetectionActive(true);
-      setGestureDetected(false);
-    };
-    
-    mediaRecorder.start();
-    
-    // Arrêt après 8 secondes
-    setTimeout(() => {
-      if (mediaRecorderRef.current?.state === "recording") {
-        mediaRecorderRef.current.stop();
-        toast.success("Enregistrement terminé !");
-      }
-    }, 8000);
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.stop();
-      toast.info("Enregistrement arrêté");
-    }
-  };
+  }, [cameraReady, recording, selectedCharacter, mediaPipeLoading, cameraEnabled]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
         <video
           ref={videoRef}
@@ -205,61 +214,53 @@ export default function CameraCapture({ onRecordingComplete, selectedCharacter }
           className="w-full h-full object-cover"
         />
         
-        {!cameraReady && (
+        {!cameraReady && cameraEnabled && (
           <div className="absolute inset-0 flex items-center justify-center bg-black">
-            <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
-            <p className="ml-2 text-white">Caméra en attente...</p>
+            <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
+            <p className="ml-2 text-white text-sm">Caméra en attente...</p>
           </div>
         )}
         
-        {mediaPipeLoading && cameraReady && (
-          <div className="absolute top-4 left-4 bg-black/70 rounded-lg px-3 py-1">
-            <Loader2 className="w-4 h-4 animate-spin inline mr-2 text-purple-400" />
-            <span className="text-white text-sm">Initialisation détection...</span>
-          </div>
-        )}
-        
-        {cameraReady && !recording && detectionActive && !gestureDetected && !mediaPipeLoading && (
-          <div className="absolute bottom-4 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-center">
-            <div className="inline-block px-4 py-2 bg-purple-600/90 rounded-full">
-              <Sparkles className="w-4 h-4 inline mr-2" />
-              <span className="text-white text-sm">
-                Fais le geste : {selectedCharacter?.gestureName || "?"}
+        {cameraReady && !recording && !gestureDetected && !mediaPipeLoading && cameraEnabled && (
+          <div className="absolute bottom-3 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 text-center">
+            <div className="inline-block px-3 py-1 bg-purple-600/90 rounded-full">
+              <Sparkles className="w-3 h-3 inline mr-1" />
+              <span className="text-white text-xs">
+                Geste : {selectedCharacter?.gestureName || "?"}
               </span>
             </div>
           </div>
         )}
         
         {gestureDetected && !recording && (
-          <div className="absolute inset-0 bg-green-500/30 flex items-center justify-center animate-pulse">
+          <div className="absolute inset-0 bg-green-500/50 flex items-center justify-center">
             <div className="text-center">
-              <div className="text-6xl mb-2">✨</div>
-              <p className="text-white font-bold text-xl">Geste détecté !</p>
-              <p className="text-white">Enregistrement en cours...</p>
+              <div className="text-3xl mb-1">✨</div>
+              <p className="text-white font-bold text-sm">Geste détecté !</p>
             </div>
           </div>
         )}
         
         {recording && (
-          <div className="absolute top-4 right-4 flex items-center gap-2 bg-red-500 text-white px-3 py-1 rounded-full">
-            <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-            <span className="text-sm">Enregistrement...</span>
+          <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-500 text-white px-2 py-1 rounded-full">
+            <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+            <span className="text-xs">REC</span>
           </div>
         )}
       </div>
       
-      <div className="flex justify-center gap-4">
+      <div className="flex justify-center gap-3">
         {!recording && (
-          <Button onClick={startRecording} className="bg-purple-600" disabled={!cameraReady}>
-            <Video className="w-4 h-4 mr-2" />
-            Enregistrement manuel
+          <Button onClick={startRecording} size="sm" className="bg-purple-600" disabled={!cameraReady || !cameraEnabled}>
+            <Video className="w-3 h-3 mr-1" />
+            Manuel
           </Button>
         )}
         
         {recording && (
-          <Button onClick={stopRecording} variant="destructive">
-            <Square className="w-4 h-4 mr-2" />
-            Arrêter
+          <Button onClick={stopRecording} size="sm" variant="destructive">
+            <Square className="w-3 h-3 mr-1" />
+            Stop
           </Button>
         )}
       </div>

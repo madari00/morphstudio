@@ -130,3 +130,89 @@
 }*/
 
 @import "tailwindcss";
+/* Responsive pour mobiles */
+@media (max-width: 768px) {
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  h1 {
+    font-size: 1.5rem;
+  }
+  
+  .grid {
+    gap: 1rem;
+  }
+}
+
+/* Ajustements pour écrans tactiles */
+@media (hover: none) {
+  button {
+    min-height: 44px;
+  }
+}
+
+/* ===== RESPONSIVE STYLES ===== */
+
+/* Scrollbar personnalisée pour mobile */
+.scrollbar-thin::-webkit-scrollbar {
+  height: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.1);
+  border-radius: 10px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(139, 92, 246, 0.5);
+  border-radius: 10px;
+}
+
+/* Breakpoints */
+@media (min-width: 480px) {
+  .xs\:inline {
+    display: inline;
+  }
+}
+
+/* Animations */
+@keyframes slide-in-bottom {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-in {
+  animation: slide-in-bottom 0.3s ease-out;
+}
+
+/* Ajustements mobiles */
+@media (max-width: 640px) {
+  .card-content {
+    padding: 0.75rem;
+  }
+  
+  button {
+    border-radius: 0.5rem;
+  }
+  
+  /* Améliorer la taille des éléments tactiles */
+  button, 
+  [role="button"],
+  .clickable {
+    min-height: 40px;
+  }
+}
+
+/* Tablettes */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .container {
+    max-width: 90%;
+    margin: 0 auto;
+  }
+}
